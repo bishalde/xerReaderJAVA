@@ -1,0 +1,156 @@
+package com.example.demo;
+
+import net.sf.mpxj.Task;
+import java.util.List;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import net.sf.mpxj.Relation;
+import java.util.ArrayList;
+import java.util.Map;
+import java.text.SimpleDateFormat;
+import java.util.HashMap;
+import net.sf.mpxj.ProjectFile;
+import net.sf.mpxj.primavera.PrimaveraXERFileReader;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+
+@RestController
+public class readxerFile {
+
+    @GetMapping("/")
+    String hello() {
+        return "Hello World!";
+    }
+
+    @PostMapping("/readxerfile")
+    public String uploadFile(@RequestParam("file") MultipartFile file) {
+        Path path = null;
+        try {
+
+            String extension = file.getOriginalFilename().substring(file.getOriginalFilename().lastIndexOf("."));
+            // Check if the file is of type .xer
+            if (!extension.equals(".xer")) {
+                HashMap<String, String> map = new HashMap<>();
+                map.put("error", "Error: File type is not .xer");
+                return new ObjectMapper().writeValueAsString(map);
+            }
+            // save file to the 'src/uploads' directory
+            byte[] bytes = file.getBytes();
+            path = Paths.get("./src/uploads/" + file.getOriginalFilename());
+            Files.write(path, bytes);
+
+            PrimaveraXERFileReader reader = new PrimaveraXERFileReader();
+
+            // reader.setIgnoreErrors(false);
+            ProjectFile project = reader.read(path.toString());
+
+            // Get all tasks in the project
+            List<Task> tasks = project.getTasks();
+
+            // Create a list to hold the task data
+            List<Map<String, Object>> data = new ArrayList<>();
+            List<Map<String, Object>> links = new ArrayList<>();
+            int id = 0;
+
+            // Loop through each task
+            for (Task task : tasks) {
+                Map<String, Object> attributes = new HashMap<>();
+
+                attributes.put("id", task.getID());
+                attributes.put("Activity ID", task.getActivityID());
+
+                // $custom_data
+                Map<String, Object> customData = new HashMap<>();
+                customData.put("critical", task.getCritical());
+                customData.put("type", task.getType());
+                customData.put("uid", task.getUniqueID());
+                attributes.put("$custom_data", customData);
+
+                // $raw
+                Map<String, Object> raw = new HashMap<>();
+                raw.put("actualDuration", task.getActualDuration());
+                raw.put("actualFinish", task.getActualFinish());
+                raw.put("actualStart", task.getActualStart());
+                raw.put("duration", task.getDuration());
+                raw.put("finish", task.getFinish());
+                raw.put("start", task.getStart());
+                raw.put("work", task.getCost());
+                attributes.put("$raw", raw);
+
+                attributes.put("duration", task.getDuration());
+                attributes.put("open", task.getActive());
+
+                // Parent task check
+                if (task.getParentTask() != null) {
+                    attributes.put("parent", task.getParentTask().getUniqueID());
+
+                } else {
+                    attributes.put("parent", null);
+                }
+
+                attributes.put("progress", task.getPercentageComplete());
+                attributes.put("resources", task.getResourceNames());
+                attributes.put("start_date", task.getStart());
+                attributes.put("text", task.getName());
+
+                List<Relation> predecessors = task.getPredecessors();
+                if (predecessors != null) {
+                    List<Map<String, Object>> predList = new ArrayList<>();
+                    for (Relation pred : predecessors) {
+                        Map<String, Object> predDict = new HashMap<>();
+                        predDict.put("id", id);
+                        predDict.put("$lag_unit", "h");
+                        predDict.put("lag", pred.getLag());
+                        predDict.put("source", pred.getSourceTask().getUniqueID());
+                        predDict.put("target", pred.getTargetTask().getUniqueID());
+                        predDict.put("type", pred.getType());
+                        id++;
+                        predList.add(predDict);
+                    }
+                    links.addAll(predList);
+                }
+
+                data.add(attributes);
+            }
+
+            Map<String, Object> finalOutput = new HashMap<>();
+            finalOutput.put("data", data);
+            finalOutput.put("links", links);
+
+            ObjectMapper objectMapper = new ObjectMapper();
+            objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+
+            SimpleDateFormat outputFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm");
+            objectMapper.setDateFormat(outputFormat);
+
+            String json = objectMapper.writeValueAsString(finalOutput);
+
+            return json;
+
+        } 
+        
+        
+        catch (Exception e) {
+            return "Error occured: " + e.getMessage();
+        } 
+        
+        
+        finally {
+            if (path != null) {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+}
